@@ -1,0 +1,129 @@
+---dont localize script pls <3
+local Players = game:GetService("Players")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local hrp
+
+local function updateCharacter(char)
+	character = char
+	if not character then return end
+	
+	local humanoid = character:WaitForChild("Humanoid", 5)
+	if not humanoid then return end
+	
+	hrp = character:WaitForChild("HumanoidRootPart", 5)
+	if not hrp then
+		warn("Failed to get HumanoidRootPart")
+		return
+	end
+end
+
+player.CharacterAdded:Connect(updateCharacter)
+updateCharacter(character)
+
+repeat task.wait() until hrp
+
+local ignore = workspace:WaitForChild("world"):WaitForChild("ignore")
+
+local function getPumpkins()
+	local list = {}
+	for _, child in ipairs(ignore:GetChildren()) do
+		if child:IsA("Model") and child.Name == "PumpkinReward" then
+			table.insert(list, child)
+		end
+	end
+	table.sort(list, function(a,b) return a:GetDebugId() < b:GetDebugId() end)
+	return list
+end
+
+local function anyPart(m: Model): BasePart
+	if m.PrimaryPart then return m.PrimaryPart end
+	for _, d in ipairs(m:GetDescendants()) do
+		if d:IsA("BasePart") then return d end
+	end
+end
+
+local function findPrompt(m: Model): ProximityPrompt
+	for _, d in ipairs(m:GetDescendants()) do
+		if d:IsA("ProximityPrompt") then return d end
+	end
+end
+
+local function startIndexFrom16(pumpkins)
+	local kids = ignore:GetChildren()
+	local i16 = kids[16]
+	if i16 then
+		for i, m in ipairs(pumpkins) do
+			if m == i16 then return i end
+		end
+	end
+	return 1
+end
+
+local function attemptPrompt(prompt: ProximityPrompt, holdSlack)
+	local done = false
+	local conn = ProximityPromptService.PromptTriggered:Connect(function(pp, plr)
+		if pp == prompt and plr == player then done = true end
+	end)
+
+	prompt:InputHoldBegin()
+	local deadline = time() + math.max((prompt.HoldDuration or 0) + (holdSlack or 0.25), 0.5)
+	while not done and time() < deadline do task.wait() end
+	prompt:InputHoldEnd()
+
+	if conn then conn:Disconnect() end
+	return done
+end
+
+local failCooldownSec = 5
+local failedAt: {[Instance]: number} = {}
+
+local lastIdx = nil
+while true do
+	local pumpkins = getPumpkins()
+	if #pumpkins == 0 then warn("No PumpkinReward models found."); break end
+
+	local idx = (lastIdx and ((lastIdx % #pumpkins) + 1)) or startIndexFrom16(pumpkins)
+	local tried = 0
+
+	local target, part, prompt
+	while tried < #pumpkins do
+		local cand = pumpkins[idx]
+		local cooldownUntil = failedAt[cand]
+		if not cooldownUntil or time() >= cooldownUntil then
+			local p = anyPart(cand)
+			local pr = findPrompt(cand)
+			if p and pr and pr.Enabled then
+				target, part, prompt = cand, p, pr
+				break
+	if hrp and target and part then
+		hrp.CFrame = target:GetPivot() * CFrame.new(0, 3, -4)
+		task.wait(0.05)
+		local dist = (hrp.Position - part.Position).Magnitude
+		if prompt and prompt.MaxActivationDistance and dist > prompt.MaxActivationDistance - 0.2 then
+			hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
+			task.wait(0.03)
+		end
+	end
+		task.wait(0.3)
+		continue
+	end
+
+	hrp.CFrame = target:GetPivot() * CFrame.new(0, 3, -4)
+	task.wait(0.05)
+	local dist = (hrp.Position - part.Position).Magnitude
+	if prompt.MaxActivationDistance and dist > prompt.MaxActivationDistance - 0.2 then
+		hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
+		task.wait(0.03)
+	end
+
+	local ok = attemptPrompt(prompt, 0.25)
+	if not ok then
+		failedAt[target] = time() + failCooldownSec
+	end
+
+	lastIdx = idx
+	task.wait(0.1)
+end   
